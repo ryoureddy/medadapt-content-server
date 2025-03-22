@@ -1,11 +1,34 @@
 from mcp.server.fastmcp import FastMCP
 import json
 from datetime import datetime
+import logging
+import os
+import sys
+import traceback
+from dotenv import load_dotenv
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("medadapt_server.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger("medadapt_server")
+
+# Load environment variables
+load_dotenv()
 
 # Import utility modules
-import database
-from pubmed_utils import search_pubmed, fetch_pubmed_article
-from bookshelf_utils import search_bookshelf, fetch_bookshelf_content, fetch_chapter_content
+try:
+    import database
+    from pubmed_utils import search_pubmed, fetch_pubmed_article
+    from bookshelf_utils import search_bookshelf, fetch_bookshelf_content, fetch_chapter_content
+except ImportError as e:
+    logger.error(f"Failed to import required modules: {str(e)}")
+    sys.exit(1)
 
 # Initialize MCP server
 content_server = FastMCP("MedAdapt Content Server")
@@ -27,47 +50,68 @@ def search_medical_content(query: str, specialty: str = None,
     Returns:
         List of matching resources with metadata
     """
-    # First, check local database
-    local_results = database.search_resources(
-        query=query, 
-        specialty=specialty, 
-        difficulty=difficulty, 
-        content_type=content_type, 
-        limit=max_results
-    )
-    
-    # If we have enough local results, return them
-    if len(local_results) >= max_results:
-        return local_results
-    
-    # Otherwise, search external sources
-    remaining_results = max_results - len(local_results)
-    
-    # Allocate remaining results between sources
-    pubmed_count = remaining_results // 2
-    bookshelf_count = remaining_results - pubmed_count
-    
-    # Search PubMed
-    pubmed_results = []
-    if pubmed_count > 0:
-        pubmed_results = search_pubmed(query, pubmed_count)
+    try:
+        logger.info(f"Searching for content with query: '{query}', specialty: {specialty}, difficulty: {difficulty}, content_type: {content_type}")
         
-        # Store results in database for future use
-        for result in pubmed_results:
-            database.add_resource(result)
-    
-    # Search Bookshelf
-    bookshelf_results = []
-    if bookshelf_count > 0:
-        bookshelf_results = search_bookshelf(query, bookshelf_count)
+        # First, check local database
+        local_results = database.search_resources(
+            query=query, 
+            specialty=specialty, 
+            difficulty=difficulty, 
+            content_type=content_type, 
+            limit=max_results
+        )
         
-        # Store results in database for future use
-        for result in bookshelf_results:
-            database.add_resource(result)
-    
-    # Combine and return results
-    all_results = local_results + pubmed_results + bookshelf_results
-    return all_results[:max_results]
+        logger.info(f"Found {len(local_results)} results in local database")
+        
+        # If we have enough local results, return them
+        if len(local_results) >= max_results:
+            return local_results
+        
+        # Otherwise, search external sources
+        remaining_results = max_results - len(local_results)
+        
+        # Allocate remaining results between sources
+        pubmed_count = remaining_results // 2
+        bookshelf_count = remaining_results - pubmed_count
+        
+        # Search PubMed
+        pubmed_results = []
+        if pubmed_count > 0:
+            try:
+                logger.info(f"Searching PubMed for '{query}'")
+                pubmed_results = search_pubmed(query, pubmed_count)
+                logger.info(f"Found {len(pubmed_results)} results from PubMed")
+                
+                # Store results in database for future use
+                for result in pubmed_results:
+                    database.add_resource(result)
+            except Exception as e:
+                logger.error(f"PubMed search failed: {str(e)}")
+                pubmed_results = []
+        
+        # Search Bookshelf
+        bookshelf_results = []
+        if bookshelf_count > 0:
+            try:
+                logger.info(f"Searching Bookshelf for '{query}'")
+                bookshelf_results = search_bookshelf(query, bookshelf_count)
+                logger.info(f"Found {len(bookshelf_results)} results from Bookshelf")
+                
+                # Store results in database for future use
+                for result in bookshelf_results:
+                    database.add_resource(result)
+            except Exception as e:
+                logger.error(f"Bookshelf search failed: {str(e)}")
+                bookshelf_results = []
+        
+        # Combine and return results
+        all_results = local_results + pubmed_results + bookshelf_results
+        return all_results[:max_results]
+    except Exception as e:
+        logger.error(f"Error in search_medical_content: {str(e)}")
+        logger.error(traceback.format_exc())
+        return [{"error": f"Search failed: {str(e)}"}]
 
 @content_server.tool()
 def get_resource_content(resource_id: str) -> dict:
@@ -80,35 +124,63 @@ def get_resource_content(resource_id: str) -> dict:
     Returns:
         Resource object with complete content
     """
-    # Check local database first
-    resource = database.get_resource(resource_id)
-    
-    # If resource exists and has cached content, return it
-    if resource and resource.get('cached_content'):
-        return resource
-    
-    # If not found or no cached content, fetch from source
-    if resource_id.startswith('pubmed-'):
-        pmid = resource_id.replace('pubmed-', '')
-        content = fetch_pubmed_article(pmid)
-    elif resource_id.startswith('bookshelf-'):
-        # Check if it's a chapter or a book
-        parts = resource_id.replace('bookshelf-', '').split('-')
-        if len(parts) > 1:
-            book_id = parts[0]
-            chapter_id = parts[1]
-            content = fetch_chapter_content(book_id, chapter_id)
+    try:
+        logger.info(f"Retrieving content for resource: {resource_id}")
+        
+        # Check local database first
+        resource = database.get_resource(resource_id)
+        
+        # If resource exists and has cached content, return it
+        if resource and resource.get('cached_content'):
+            logger.info(f"Resource {resource_id} found in cache")
+            return resource
+        
+        # If not found or no cached content, fetch from source
+        if resource_id.startswith('pubmed-'):
+            pmid = resource_id.replace('pubmed-', '')
+            logger.info(f"Fetching PubMed article: {pmid}")
+            content = fetch_pubmed_article(pmid)
+        elif resource_id.startswith('bookshelf-'):
+            # Check if it's a chapter or a book
+            parts = resource_id.replace('bookshelf-', '').split('-')
+            if len(parts) > 1:
+                book_id = parts[0]
+                chapter_id = parts[1]
+                logger.info(f"Fetching Bookshelf chapter: {book_id}/{chapter_id}")
+                content = fetch_chapter_content(book_id, chapter_id)
+            else:
+                book_id = parts[0]
+                logger.info(f"Fetching Bookshelf book: {book_id}")
+                content = fetch_bookshelf_content(book_id)
+        elif resource_id.startswith('user-doc-'):
+            # It's a user document, get from database
+            logger.info(f"Retrieving user document: {resource_id}")
+            doc = database.get_user_document(resource_id)
+            if doc:
+                content = {
+                    'id': doc['id'],
+                    'title': doc['title'],
+                    'content': doc['content'],
+                    'upload_date': doc['upload_date'],
+                    'source_type': 'user_provided'
+                }
+            else:
+                return {"error": f"User document not found: {resource_id}"}
         else:
-            book_id = parts[0]
-            content = fetch_bookshelf_content(book_id)
-    else:
-        return {"error": f"Unknown resource ID format: {resource_id}"}
-    
-    # Store fetched content in database
-    if 'error' not in content:
-        database.add_resource(content)
-    
-    return content
+            return {"error": f"Unknown resource ID format: {resource_id}"}
+        
+        # Store fetched content in database
+        if 'error' not in content:
+            logger.info(f"Caching content for resource: {resource_id}")
+            database.add_resource(content)
+        else:
+            logger.error(f"Error fetching content for {resource_id}: {content.get('error')}")
+        
+        return content
+    except Exception as e:
+        logger.error(f"Error in get_resource_content: {str(e)}")
+        logger.error(traceback.format_exc())
+        return {"error": f"Failed to retrieve resource: {str(e)}"}
 
 @content_server.tool()
 def get_topic_overview(topic: str) -> dict:
@@ -121,42 +193,57 @@ def get_topic_overview(topic: str) -> dict:
     Returns:
         Structured overview with definitions, key concepts, and related materials
     """
-    # Search for relevant resources
-    resources = search_medical_content(topic, max_results=5)
-    
-    # Extract definition from resources
-    definition = extract_definition(topic, resources)
-    
-    # Identify key concepts
-    key_concepts = extract_key_concepts(topic, resources)
-    
-    # Find related topics
-    related_topics = database.get_related_topics(topic)
-    
-    # If no related topics found, use simplified fallback
-    if not related_topics:
-        related_topics = [
-            f"{topic} pathophysiology", 
-            f"{topic} anatomy", 
-            f"{topic} clinical aspects"
-        ]
-    
-    # Compile overview
-    overview = {
-        'topic': topic,
-        'definition': definition,
-        'key_concepts': key_concepts,
-        'related_topics': related_topics,
-        'recommended_resources': [
-            {
-                'id': r['id'],
-                'title': r['title'],
-                'type': r.get('content_type', 'unknown')
-            } for r in resources[:3]  # Top 3 resources
-        ]
-    }
-    
-    return overview
+    try:
+        logger.info(f"Generating overview for topic: {topic}")
+        
+        # Search for relevant resources
+        resources = search_medical_content(topic, max_results=5)
+        
+        # Check for errors in resources
+        if resources and len(resources) > 0 and 'error' in resources[0]:
+            return {"error": f"Failed to find resources for topic overview: {resources[0]['error']}"}
+        
+        # Extract definition from resources
+        definition = extract_definition(topic, resources)
+        
+        # Identify key concepts
+        key_concepts = extract_key_concepts(topic, resources)
+        
+        # Find related topics
+        try:
+            related_topics = database.get_related_topics(topic)
+        except Exception as e:
+            logger.warning(f"Failed to get related topics: {str(e)}")
+            related_topics = []
+        
+        # If no related topics found, use simplified fallback
+        if not related_topics:
+            related_topics = [
+                f"{topic} pathophysiology", 
+                f"{topic} anatomy", 
+                f"{topic} clinical aspects"
+            ]
+        
+        # Compile overview
+        overview = {
+            'topic': topic,
+            'definition': definition,
+            'key_concepts': key_concepts,
+            'related_topics': related_topics,
+            'recommended_resources': [
+                {
+                    'id': r['id'],
+                    'title': r['title'],
+                    'type': r.get('content_type', 'unknown')
+                } for r in resources[:3]  # Top 3 resources
+            ]
+        }
+        
+        return overview
+    except Exception as e:
+        logger.error(f"Error in get_topic_overview: {str(e)}")
+        logger.error(traceback.format_exc())
+        return {"error": f"Failed to generate topic overview: {str(e)}"}
 
 def extract_definition(topic, resources):
     """Extract definition from resources"""
@@ -667,10 +754,44 @@ def extract_main_points_from_document(resource):
     
     return main_points[:5]  # Return up to 5 main points
 
+def initialize_server():
+    """Initialize the server and perform startup checks"""
+    try:
+        # Initialize database
+        logger.info("Initializing database...")
+        database.initialize_database()
+        
+        # Check for NCBI API key
+        api_key = os.getenv('NCBI_API_KEY')
+        if api_key:
+            logger.info("NCBI API key found in environment")
+        else:
+            logger.warning("NCBI API key not found. API rate limits will be restricted.")
+            
+        # Log server information
+        logger.info("MedAdapt Content Server initialized successfully")
+        logger.info(f"Python version: {sys.version}")
+        logger.info(f"Server running from: {os.path.dirname(os.path.abspath(__file__))}")
+        
+        return True
+    except Exception as e:
+        logger.error(f"Server initialization failed: {str(e)}")
+        logger.error(traceback.format_exc())
+        return False
+
 # Start server
 if __name__ == "__main__":
-    # Initialize database
-    database.initialize_database()
+    # Initialize the server
+    if not initialize_server():
+        logger.error("Server initialization failed. Exiting.")
+        sys.exit(1)
     
-    print("Starting MedAdapt Content Server...")
-    content_server.run(transport="stdio") 
+    logger.info("Starting MedAdapt Content Server...")
+    try:
+        content_server.run(transport="stdio")
+    except KeyboardInterrupt:
+        logger.info("Server stopped by user")
+    except Exception as e:
+        logger.error(f"Server error: {str(e)}")
+        logger.error(traceback.format_exc())
+        sys.exit(1) 

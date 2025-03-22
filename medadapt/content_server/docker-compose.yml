@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  medadapt:
+    build: .
+    container_name: medadapt-content-server
+    restart: unless-stopped
+    volumes:
+      - medadapt_data:/data
+      - ./logs:/app/logs
+    environment:
+      - NCBI_API_KEY=${NCBI_API_KEY}
+    stdin_open: true
+    tty: true
+
+volumes:
+  medadapt_data:
+    name: medadapt_data 
