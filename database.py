@@ -5,13 +5,17 @@ from datetime import datetime
 
 def get_db_connection():
     """Create connection to SQLite database with row factory"""
-    conn = sqlite3.connect('medadapt_content.db')
+    # Get the database path from environment variable or use default path
+    db_path = os.environ.get('DB_PATH', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'medadapt_content.db'))
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
 
 def initialize_database():
     """Initialize the database schema if it doesn't exist"""
-    conn = sqlite3.connect('medadapt_content.db')
+    # Get the database path from environment variable or use default path
+    db_path = os.environ.get('DB_PATH', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'medadapt_content.db'))
+    conn = sqlite3.connect(db_path)
     c = conn.cursor()
     
     # Resources table for storing content metadata and cached content

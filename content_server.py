@@ -1,6 +1,11 @@
 from mcp.server.fastmcp import FastMCP
 import json
+import os
 from datetime import datetime
+
+# Set the working directory to the script directory
+# This ensures relative paths work correctly when launched from Claude Desktop
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # Import utility modules
 import database

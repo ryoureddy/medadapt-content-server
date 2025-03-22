@@ -14,10 +14,9 @@ git clone https://github.com/ryoureddy/medadapt-content-server.git
 cd medadapt-content-server
 
 # Install dependencies
-pip install -r medadapt/content_server/requirements.txt
+pip install -r requirements.txt
 
 # Run the server
-cd medadapt/content_server
 python content_server.py
 ```
 
@@ -30,8 +29,6 @@ python content_server.py
 - **Learning Plans**: Create structured learning plans with objectives and resources
 - **Content Analysis**: Extract key points, methodologies, and findings from medical resources
 - **User Content**: Import and analyze user-provided documents
-- **Database Backup**: Automated backup and restore functionality
-- **Docker Support**: Easy containerized deployment
 
 ## Installation
 
@@ -45,40 +42,24 @@ cd medadapt-content-server
 
 2. Create a virtual environment (optional but recommended):
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows, use: venv\Scripts\activate
+python -m venv .venv
+source .venv/bin/activate  # On Windows, use: .venv\Scripts\activate
 ```
 
 3. Install dependencies:
 ```bash
-pip install -r medadapt/content_server/requirements.txt
+pip install -r requirements.txt
 ```
 
 4. Configure (optional):
    - Get an NCBI API key for improved rate limits: https://ncbiinsights.ncbi.nlm.nih.gov/2017/11/02/new-api-keys-for-the-e-utilities/
    - Create a `.env` file based on `.env.example`
 
-### Docker Installation
-
-1. Clone the repository:
-```bash
-git clone https://github.com/ryoureddy/medadapt-content-server.git
-cd medadapt-content-server/medadapt/content_server
-```
-
-2. Run with Docker Compose:
-```bash
-docker-compose up -d
-```
-
-This will build the Docker image and start the server in the background.
-
 ## Usage
 
 ### Running the Server
 
 ```bash
-cd medadapt/content_server
 python content_server.py
 ```
 
@@ -86,32 +67,42 @@ python content_server.py
 
 1. Open Claude Desktop
 2. Go to Settings → Model Context Protocol → Add Server
-3. Configure with the following details:
-   - Name: MedAdapt Content Server
-   - Transport Type: Command
-   - Command: `/path/to/python /path/to/medadapt-content-server/medadapt/content_server/content_server.py`
+3. Configure with the following JSON in your `claude_desktop_config.json` file located in:
+   - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+   - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "medadapt": {
+      "command": "/path/to/python",
+      "args": [
+        "/path/to/medadapt-content-server/content_server.py"
+      ],
+      "env": {
+        "DB_PATH": "/path/to/medadapt-content-server/medadapt_content.db"
+      }
+    }
+  }
+}
+```
+
+Replace `/path/to/python` with your actual Python path (e.g., `/opt/anaconda3/bin/python` or `C:\Python311\python.exe`).
+Replace `/path/to/medadapt-content-server/` with the absolute path to your cloned repository.
+
+> **Important**: The `DB_PATH` environment variable ensures the database file is created and accessed with an absolute path, preventing common file access errors.
 
 ### Populating Initial Topic Mappings
 
 ```bash
-cd medadapt/content_server
 python populate_topics.py
 ```
 
 ### Testing
 
-Run comprehensive tests:
+Run tests to verify everything is working:
 ```bash
-cd medadapt/content_server
-python run_tests.py
-```
-
-Run specific test types:
-```bash
-python run_tests.py --unit        # Unit tests only
-python run_tests.py --integration # Integration tests only
-python run_tests.py --performance # Performance tests only
-python run_tests.py --api         # External API tests only
+python test_server.py
 ```
 
 ## Example Usage with Claude
@@ -149,37 +140,41 @@ The server provides the following tools to Claude:
 - `generate_learning_plan`: Create structured learning plan with objectives
 - `extract_article_key_points`: Extract key findings from medical articles
 
-## Database Management
-
-### Backups
-
-Create a database backup:
-```bash
-cd medadapt/content_server
-python backup_utils.py
-```
-
-Schedule regular backups (runs in foreground):
-```bash
-python -c "import backup_utils; backup_utils.schedule_backup(24)"
-```
-
-List available backups:
-```bash
-python -c "import backup_utils; print(backup_utils.list_backups())"
-```
-
-Restore from backup:
-```bash
-python -c "import backup_utils; backup_utils.restore_backup('backups/your_backup_file.db')"
-```
-
 ## Troubleshooting
 
-- **API Rate Limiting**: If you encounter rate limits from NCBI, add an API key to your `.env` file
-- **Database File Permission Issues**: Ensure the directory where the server runs has write permissions
-- **Claude Desktop Connection**: Verify the server is running and properly configured in Claude Desktop
-- **Docker Issues**: Check logs with `docker-compose logs` if you're running in Docker
+### Common Issues and Solutions
+
+1. **Database Connection Error**
+   - **Symptom**: `sqlite3.OperationalError: unable to open database file`
+   - **Solution**: Make sure the `DB_PATH` environment variable is set correctly in your Claude Desktop configuration, pointing to an absolute path where the application has write permissions.
+
+2. **File Path Error**
+   - **Symptom**: `No such file or directory` errors
+   - **Solution**: Ensure all paths in the Claude Desktop configuration are absolute paths without extra quotes or escape characters.
+
+3. **API Rate Limiting**
+   - **Symptom**: Slow or failed responses from PubMed or NCBI Bookshelf
+   - **Solution**: Get an NCBI API key and add it to your `.env` file
+
+4. **Claude Desktop Connection**
+   - **Symptom**: Claude cannot connect to the MCP server
+   - **Solution**: Verify the server is running in a terminal window and properly configured in Claude Desktop
+
+## Project Structure
+
+```
+medadapt-content-server/
+│
+├── content_server.py     # Main MCP server implementation
+├── database.py          # SQLite database interface
+├── pubmed_utils.py      # PubMed API utilities
+├── bookshelf_utils.py   # NCBI Bookshelf utilities
+├── populate_topics.py   # Script to populate initial topic data
+├── test_server.py       # Test script
+├── requirements.txt     # Python dependencies
+├── .env.example         # Example environment variables
+└── README.md            # Documentation
+```
 
 ## License
 
@@ -188,4 +183,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## Acknowledgments
 
 - NCBI for providing access to PubMed and Bookshelf APIs
-- Claude for the MCP integration capability 
+- Anthropic for Claude and the MCP integration capability 
